@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Knowledge Folder Uploader</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding: 20px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .drag-area {
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            margin: 20px 0;
+            background-color: #f8f9fa;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .drag-area:hover {
+            background-color: #e9ecef;
+        }
+        .drag-area.active {
+            border-color: #0d6efd;
+            background-color: #e9f2ff;
+        }
+        .progress {
+            height: 20px;
+            margin-bottom: 10px;
+        }
+        .file-list {
+            max-height: 300px;
+            overflow-y: auto;
+            margin: 20px 0;
+        }
+        .settings-section {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .result-section {
+            margin-top: 20px;
+        }
+        .upload-results {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+        }
+        .help-text {
+            font-size: 14px;
+            color: #6c757d;
+        }
+        .folder-name {
+            font-weight: 500;
+            margin-top: 10px;
+        }
+        .processing-indicator {
+            display: flex;
+            align-items: center;
+            margin-top: 10px;
+        }
+        .processing-indicator .spinner-border {
+            margin-right: 10px;
+        }
+        #uploadResults {
+            display: none;
+        }
+        .api-key-help, .folder-id-help {
+            cursor: pointer;
+            color: #0d6efd;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4">Knowledge Folder Uploader</h1>
+        
+        <div class="settings-section">
+            <h3>Settings</h3>
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label for="apiKey" class="form-label">API Key <span class="api-key-help" data-bs-toggle="tooltip" title="Ask your Langdock administrator for your API key. This is needed to connect to your Langdock account.">?</span></label>
+                    <input type="password" class="form-control" id="apiKey" placeholder="Enter API Key">
+                    <div class="form-text"></div>
+                </div>
+                <div class="col-md-6">
+                    <label for="folderId" class="form-label">Knowledge Folder ID <span class="folder-id-help" data-bs-toggle="tooltip" title="Find the ID in the URL of your Langdock knowledge folder. It's the last part of the URL after the last slash. For example, in https://app.langdock.com/knowledge/abc123, the ID is abc123">?</span></label>
+                    <input type="text" class="form-control" id="folderId" placeholder="Enter Folder ID">
+                    <div class="form-text"></div>
+                </div>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="saveSettings">
+                <label class="form-check-label" for="saveSettings">
+                    Save settings in browser
+                </label>
+            </div>
+        </div>
+        
+        <div class="drag-area" id="dragArea">
+            <div>
+                <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" fill="currentColor" class="bi bi-folder-plus mb-3" viewBox="0 0 16 16">
+                    <path d="m.5 3 .04.87a1.99 1.99 0 0 0-.342 1.311l.637 7A2 2 0 0 0 2.826 14H9v-1H2.826a1 1 0 0 1-.995-.91l-.637-7A1 1 0 0 1 2.19 4h11.62a1 1 0 0 1 .996 1.09L14.54 8h1.005l.256-2.819A2 2 0 0 0 13.81 3H9.828a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 6.172 1H2.5a2 2 0 0 0-2 2zm5.672-1a1 1 0 0 1 .707.293L7.586 3H2.19c-.24 0-.47.042-.683.12L1.5 2.98a1 1 0 0 1 1-.98h3.672z"/>
+                    <path d="M13.5 10a.5.5 0 0 1 .5.5V12h1.5a.5.5 0 1 1 0 1H14v1.5a.5.5 0 1 1-1 0V13h-1.5a.5.5 0 0 1 0-1H13v-1.5a.5.5 0 0 1 .5-.5z"/>
+                </svg>
+                <h4>Drag & Drop a Folder Here</h4>
+                <p>or</p>
+                <input type="file" id="fileInput" webkitdirectory directory hidden/>
+                <button type="button" class="btn btn-primary" onclick="document.getElementById('fileInput').click()">Select Folder</button>
+            </div>
+        </div>
+        
+        <div id="uploadStatus" style="display: none;">
+            <div id="selectedFolderInfo">
+                <p>Selected folder: <span id="folderName" class="folder-name"></span></p>
+                <p><span id="fileCount"></span> files ready to upload</p>
+            </div>
+            
+            <div class="processing-indicator" id="processingIndicator" style="display: none;">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Processing...</span>
+                </div>
+                <div id="processingText">Processing files...</div>
+            </div>
+            
+            <div class="progress-section">
+                <div class="d-flex justify-content-between align-items-center">
+                    <p class="mb-1" id="progressStatus">Uploading...</p>
+                    <p class="mb-1" id="progressPercentage">0%</p>
+                </div>
+                <div class="progress">
+                    <div id="uploadProgress" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                </div>
+                <p class="text-muted"><small id="uploadCount">0/0 files uploaded</small></p>
+            </div>
+        </div>
+        
+        <div id="uploadResults" class="result-section">
+            <h4>Upload Results</h4>
+            <div class="upload-results">
+                <p id="resultsSummary"></p>
+                <ul id="resultsDetails" class="list-group mt-3"></ul>
+                <div class="mt-3">
+                    <button id="uploadAnotherBtn" class="btn btn-primary">Upload Another Folder</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Variables to store upload state
+        let files = [];
+        let paths = [];
+        let sessionId = null;
+        let eventSource = null;
+        let uploadInProgress = false;
+        
+        // DOM elements
+        const dragArea = document.getElementById('dragArea');
+        const fileInput = document.getElementById('fileInput');
+        const uploadStatus = document.getElementById('uploadStatus');
+        const folderName = document.getElementById('folderName');
+        const fileCount = document.getElementById('fileCount');
+        const uploadProgress = document.getElementById('uploadProgress');
+        const progressPercentage = document.getElementById('progressPercentage');
+        const uploadCount = document.getElementById('uploadCount');
+        const progressStatus = document.getElementById('progressStatus');
+        const processingIndicator = document.getElementById('processingIndicator');
+        const uploadResults = document.getElementById('uploadResults');
+        const resultsSummary = document.getElementById('resultsSummary');
+        const resultsDetails = document.getElementById('resultsDetails');
+        const apiKeyInput = document.getElementById('apiKey');
+        const folderIdInput = document.getElementById('folderId');
+        const saveSettingsCheckbox = document.getElementById('saveSettings');
+        
+        // Load saved settings if available
+        document.addEventListener('DOMContentLoaded', function() {
+            if (localStorage.getItem('saveSettings') === 'true') {
+                apiKeyInput.value = localStorage.getItem('apiKey') || '';
+                folderIdInput.value = localStorage.getItem('folderId') || '';
+                saveSettingsCheckbox.checked = true;
+            }
+            
+            // Initialize tooltips
+            const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            tooltipTriggerList.map(function (tooltipTriggerEl) {
+                return new bootstrap.Tooltip(tooltipTriggerEl);
+            });
+        });
+        
+        // Save settings when checkbox changes
+        saveSettingsCheckbox.addEventListener('change', function() {
+            if (this.checked) {
+                localStorage.setItem('apiKey', apiKeyInput.value);
+                localStorage.setItem('folderId', folderIdInput.value);
+                localStorage.setItem('saveSettings', 'true');
+            } else {
+                localStorage.removeItem('apiKey');
+                localStorage.removeItem('folderId');
+                localStorage.removeItem('saveSettings');
+            }
+        });
+        
+        // Update saved settings when inputs change
+        apiKeyInput.addEventListener('input', function() {
+            if (saveSettingsCheckbox.checked) {
+                localStorage.setItem('apiKey', this.value);
+            }
+        });
+        
+        folderIdInput.addEventListener('input', function() {
+            if (saveSettingsCheckbox.checked) {
+                localStorage.setItem('folderId', this.value);
+            }
+        });
+        
+        // Drag and drop handling
+        dragArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dragArea.classList.add('active');
+        });
+        
+        dragArea.addEventListener('dragleave', () => {
+            dragArea.classList.remove('active');
+        });
+        
+        dragArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dragArea.classList.remove('active');
+            
+            if (e.dataTransfer.items && e.dataTransfer.items[0].webkitGetAsEntry) {
+                processDroppedItems(e.dataTransfer.items);
+            }
+        });
+        
+        // File input change handler
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                processSelectedFiles(fileInput.files);
+            }
+        });
+        
+        // Process dropped items to get all files recursively
+        async function processDroppedItems(items) {
+            files = [];
+            paths = [];
+            
+            // Get the first folder item
+            const item = items[0];
+            const entry = item.webkitGetAsEntry();
+            
+            if (entry && entry.isDirectory) {
+                folderName.textContent = entry.name;
+                processingText.textContent = "Processing folder structure...";
+                
+                showProcessingIndicator(true);
+                
+                try {
+                    // Start recursive processing of folder structure
+                    await traverseDirectory(entry, '');
+                    
+                    if (files.length > 0) {
+                        fileCount.textContent = files.length;
+                        uploadStatus.style.display = 'block';
+                        showProcessingIndicator(false);
+                        
+                        // Auto start upload
+                        startUpload();
+                    } else {
+                        showProcessingIndicator(false);
+                        alert('No files found in the selected folder structure.');
+                    }
+                } catch (error) {
+                    console.error('Error processing folder structure:', error);
+                    showProcessingIndicator(false);
+                    alert('Error processing folder structure: ' + error.message);
+                }
+            } else {
+                alert('Please select a folder, not individual files.');
+            }
+        }
+        
+        // Process selected files from file input
+        function processSelectedFiles(fileList) {
+            files = [];
+            paths = [];
+            
+            const baseFolderName = fileList[0].webkitRelativePath.split('/')[0];
+            folderName.textContent = baseFolderName;
+            fileCount.textContent = fileList.length;
+            
+            // Read all files
+            for (let i = 0; i < fileList.length; i++) {
+                const file = fileList[i];
+                const path = file.webkitRelativePath;
+                
+                files.push(file);
+                paths.push(path);
+            }
+            
+            // Show status
+            uploadStatus.style.display = 'block';
+            
+            // Auto start upload
+            startUpload();
+        }
+        
+        // Recursively traverse directory to get all files
+        async function traverseDirectory(dirEntry, path) {
+            const reader = dirEntry.createReader();
+            const entries = await new Promise((resolve) => {
+                const result = [];
+                function readEntries() {
+                    reader.readEntries((entries) => {
+                        if (entries.length > 0) {
+                            result.push(...entries);
+                            readEntries();
+                        } else {
+                            resolve(result);
+                        }
+                    });
+                }
+                readEntries();
+            });
+            
+            for (const entry of entries) {
+                // Build the relative path preserving full folder structure
+                const entryPath = path ? `${path}/${entry.name}` : entry.name;
+                
+                if (entry.isFile) {
+                    const file = await new Promise((resolve) => {
+                        entry.file(resolve);
+                    });
+                    files.push(file);
+                    paths.push(entryPath);
+                } else if (entry.isDirectory) {
+                    // Continue recursion with updated path
+                    await traverseDirectory(entry, entryPath);
+                }
+            }
+        }
+        
+        // Show processing indicator
+        function showProcessingIndicator(show) {
+            processingIndicator.style.display = show ? 'flex' : 'none';
+            if (!show) {
+                processingText.textContent = "Processing files...";
+            }
+        }
+        
+        // Start the upload process
+        function startUpload() {
+            if (uploadInProgress) return;
+            
+            const apiKey = apiKeyInput.value.trim();
+            const folderId = folderIdInput.value.trim();
+            
+            if (!apiKey || !folderId) {
+                alert('Please enter both API Key and Folder ID.');
+                return;
+            }
+            
+            if (files.length === 0) {
+                alert('Please select a folder with files to upload.');
+                return;
+            }
+            
+            uploadInProgress = true;
+            resetUploadUI();
+            showUploadProgress();
+            
+            // Create unique session ID
+            sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
+            
+            // Create form data
+            const formData = new FormData();
+            formData.append('session_id', sessionId);
+            formData.append('api_key', apiKey);
+            formData.append('folder_id', folderId);
+            
+            // Add files and paths
+            for (let i = 0; i < files.length; i++) {
+                formData.append('files[]', files[i]);
+                formData.append('paths[]', paths[i]);
+            }
+            
+            // Start progress monitoring
+            startProgressMonitoring();
+            
+            // Make upload request
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Upload initiated:', data);
+            })
+            .catch(error => {
+                console.error('Error starting upload:', error);
+                showUploadError('Failed to start upload: ' + error.message);
+            });
+        }
+        
+        // Start monitoring upload progress
+        function startProgressMonitoring() {
+            // Close any existing event source
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            // Connect to server-sent events
+            eventSource = new EventSource(`/progress?session_id=${sessionId}`);
+            
+            // Handle progress updates
+            eventSource.addEventListener('message', function(event) {
+                const data = JSON.parse(event.data);
+                
+                if (data.type === 'progress') {
+                    updateProgressUI(data);
+                } else if (data.type === 'complete') {
+                    fetchFinalResults();
+                    eventSource.close();
+                } else if (data.type === 'error') {
+                    showUploadError(data.message);
+                    eventSource.close();
+                }
+            });
+            
+            eventSource.addEventListener('error', function() {
+                console.error('SSE connection error');
+                // Try to reconnect in case of temporary issues
+            });
+        }
+        
+        // Update the UI with progress information
+        function updateProgressUI(data) {
+            const percent = data.percent || Math.round((data.uploaded / data.total) * 100);
+            uploadProgress.style.width = `${percent}%`;
+            progressPercentage.textContent = `${percent}%`;
+            uploadCount.textContent = `${data.uploaded}/${data.total} files uploaded`;
+            progressStatus.textContent = 'Uploading...';
+        }
+        
+        // Fetch final results after upload completes
+        function fetchFinalResults() {
+            fetch(`/status?session_id=${sessionId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'complete') {
+                    // Set progress to 100% regardless of success/failure ratio
+                    uploadProgress.style.width = '100%';
+                    progressPercentage.textContent = '100%';
+                    uploadCount.textContent = `${data.summary.success}/${data.summary.total} files uploaded`;
+                    
+                    showUploadComplete();
+                    displayResults(data);
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching results:', error);
+                showUploadError('Failed to fetch results');
+            });
+        }
+        
+        // Display upload results
+        function displayResults(data) {
+            uploadResults.style.display = 'block';
+            
+            // Display summary
+            const summary = data.summary;
+            resultsSummary.textContent = `Results: ${summary.success} files uploaded successfully, ${summary.error} failed`;
+            
+            // Clear previous results
+            resultsDetails.innerHTML = '';
+            
+            // Always show successful uploads count if any were successful
+            if (summary.success > 0) {
+                const successItem = document.createElement('li');
+                successItem.className = 'list-group-item list-group-item-success';
+                successItem.innerHTML = `<strong>✓ ${summary.success} ${summary.success === 1 ? 'file' : 'files'} uploaded successfully</strong>`;
+                resultsDetails.appendChild(successItem);
+            }
+            
+            // Only show error details if there are errors
+            if (summary.error > 0) {
+                // Add a header for the errors section
+                const header = document.createElement('li');
+                header.className = 'list-group-item list-group-item-danger';
+                header.innerHTML = `<strong>❌ Failed Uploads (${summary.error}):</strong>`;
+                resultsDetails.appendChild(header);
+                
+                // Add only failed file results to the list
+                data.results.forEach(result => {
+                    if (result.status === 'error') {
+                        const item = document.createElement('li');
+                        item.className = 'list-group-item';
+                        
+                        // Get friendly error message
+                        const friendlyMessage = getFriendlyErrorMessage(result.file, result.message);
+                        
+                        item.innerHTML = `${result.file}: <span class="text-danger">${friendlyMessage}</span>`;
+                        resultsDetails.appendChild(item);
+                    }
+                });
+            } else {
+                // If no errors, just show a success message
+                const item = document.createElement('li');
+                item.className = 'list-group-item list-group-item-success';
+                item.innerHTML = `<span class="text-success">All files uploaded successfully!</span>`;
+                resultsDetails.appendChild(item);
+            }
+        }
+        
+        // Format error messages to be more user-friendly
+        function getFriendlyErrorMessage(filename, originalMessage) {
+            // Check if it's a file type not allowed error
+            if (originalMessage.includes('of type') && originalMessage.includes('is not allowed')) {
+                return "File type not supported";
+            }
+            
+            // Check for empty file error
+            if (originalMessage.includes('allowEmptyFiles is false') || originalMessage.includes('file size should be greater than 0')) {
+                return "File appears to be empty";
+            }
+            
+            // Check for timeout error
+            if (originalMessage.includes('timeout') || originalMessage.includes('timed out')) {
+                return "Connection timed out - file may be too large";
+            }
+            
+            // Check for server errors
+            if (originalMessage.includes('500') || originalMessage.includes('Server error')) {
+                return "Server error occurred - please try again later";
+            }
+            
+            // For API errors that contain JSON
+            if (originalMessage.includes('Failed to upload: {')) {
+                try {
+                    // Try to extract just the message part from the JSON
+                    const jsonStart = originalMessage.indexOf('{');
+                    const jsonPart = originalMessage.substring(jsonStart);
+                    const parsedError = JSON.parse(jsonPart);
+                    
+                    if (parsedError && parsedError.message) {
+                        // Return a cleaner version of the error message
+                        let cleanMessage = parsedError.message
+                            .replace(/^The file .* of type .* is not allowed\.$/g, "File type not supported")
+                            .replace(/"/g, ''); // Remove quotes
+                            
+                        return cleanMessage;
+                    }
+                } catch (e) {
+                    // If parsing fails, continue to default return
+                }
+            }
+            
+            // Default case - remove the "Failed to upload: " prefix if present
+            return originalMessage.replace('Failed to upload: ', '');
+        }
+        
+        // Reset the upload UI
+        function resetUploadUI() {
+            uploadProgress.style.width = '0%';
+            progressPercentage.textContent = '0%';
+            uploadCount.textContent = '0/0 files uploaded';
+            progressStatus.textContent = 'Starting upload...';
+            uploadResults.style.display = 'none';
+        }
+        
+        // Completely reset the application state for a new upload
+        function resetAppState() {
+            files = [];
+            paths = [];
+            sessionId = null;
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            uploadInProgress = false;
+            
+            // Reset UI
+            uploadProgress.style.width = '0%';
+            progressPercentage.textContent = '0%';
+            uploadCount.textContent = '0/0 files uploaded';
+            progressStatus.textContent = '';
+            uploadResults.style.display = 'none';
+            uploadStatus.style.display = 'none';
+            processingIndicator.style.display = 'none';
+            dragArea.style.display = 'block'; // Show drag area again
+            
+            // Reset file input to allow selecting the same folder again
+            document.getElementById('fileInput').value = '';
+        }
+        
+        // Show upload progress UI
+        function showUploadProgress() {
+            processingIndicator.style.display = 'flex';
+            dragArea.style.display = 'none'; // Hide the drag area when showing progress
+        }
+        
+        // Show upload complete UI
+        function showUploadComplete() {
+            processingIndicator.style.display = 'none';
+            progressStatus.textContent = 'Upload Process Complete';
+            uploadProgress.classList.remove('progress-bar-animated');
+            uploadInProgress = false;
+        }
+        
+        // Show upload error UI
+        function showUploadError(message) {
+            processingIndicator.style.display = 'none';
+            progressStatus.textContent = `Error: ${message}`;
+            uploadInProgress = false;
+        }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Add event listener for "Upload Another Folder" button
+        document.getElementById('uploadAnotherBtn').addEventListener('click', function() {
+            resetAppState();
+        });
+    </script>
+</body>
+</html>
