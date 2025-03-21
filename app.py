@@ -144,53 +144,102 @@ def send_progress_update(session_id):
 
 @app.route('/progress')
 def progress():
-    """Stream the upload progress using server-sent events"""
     session_id = request.args.get('session_id')
     
-    # Create a new queue for this session if it doesn't exist
+    app.logger.info(f"Progress connection established for session: {session_id}")
+    
     if session_id not in event_queues:
         event_queues[session_id] = Queue()
-    
+        
     def generate():
-        # Send initial progress
+        queue = event_queues[session_id]
+        
+        # Send an initial event to establish connection
+        yield "data: {\"type\": \"connected\", \"session\": \"" + session_id + "\"}\n\n"
+        
+        # Send initial progress if available
         if session_id in active_uploads:
             upload_data = active_uploads[session_id]
-            yield f"data: {json.dumps({'type': 'progress', 'total': upload_data['total'], 'uploaded': upload_data['uploaded'], 'percent': int((upload_data['uploaded'] / upload_data['total']) * 100) if upload_data['total'] > 0 else 0})}\n\n"
+            initial_progress = {
+                'type': 'progress', 
+                'total': upload_data['total'], 
+                'uploaded': upload_data['uploaded'], 
+                'percent': int((upload_data['uploaded'] / upload_data['total']) * 100) if upload_data['total'] > 0 else 0
+            }
+            yield f"data: {json.dumps(initial_progress)}\n\n"
         
         try:
             while True:
-                # Check if session is completed
-                if session_id in active_uploads:
-                    upload_data = active_uploads[session_id]
-                    is_completed = upload_data.get('completed', False)
-                    
-                    if is_completed:
-                        yield f"data: {json.dumps({'type': 'complete'})}\n\n"
-                        break
-                
-                # Check if we have a new event in the queue
+                # Get message from queue, or timeout after 30 seconds
                 try:
-                    # Poll the queue with a timeout to avoid blocking forever
-                    event_data = event_queues[session_id].get(timeout=0.5)
-                    yield f"data: {json.dumps(event_data)}\n\n"
-                except Exception:
-                    # No event available, send a heartbeat to keep the connection alive
-                    yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
-                
-                # Check if the session no longer exists or has timed out
-                if session_id not in active_uploads:
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'Session not found'})}\n\n"
-                    break
+                    message = queue.get(timeout=30)
+                    queue.task_done()
                     
-                # Check for timeout (no updates in 60 seconds)
-                if time.time() - active_uploads[session_id].get('last_update', active_uploads[session_id]['start_time']) > 60:
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'Upload timed out'})}\n\n"
-                    break
+                    # If this is a completion message, clean up
+                    if message.get('type') == 'complete':
+                        app.logger.info(f"Upload complete for session {session_id}, closing SSE connection")
+                        yield f"data: {json.dumps(message)}\n\n"
+                        break
+                        
+                    # Send message to client
+                    yield f"data: {json.dumps(message)}\n\n"
+                    
+                except Exception as e:
+                    # On timeout or any error, send a keep-alive to prevent connection close
+                    app.logger.debug(f"Sending keep-alive for session {session_id}")
+                    yield f"data: {json.dumps({'type': 'keep-alive'})}\n\n"
         except GeneratorExit:
-            # Clean up when the client disconnects
-            print(f"Client disconnected from SSE stream for session {session_id}")
+            app.logger.info(f"Client disconnected for session {session_id}")
+        
+        # If we exit the loop, ensure we cleanup
+        if session_id in active_uploads and active_uploads[session_id].get('completed', False):
+            # Keep session data for a while to handle page refreshes
+            app.logger.info(f"Keeping session {session_id} data for potential refresh")
+        
+    return Response(generate(), mimetype='text/event-stream', 
+                   headers={'Cache-Control': 'no-cache',
+                            'Connection': 'keep-alive',
+                            'X-Accel-Buffering': 'no'})
+
+@app.route('/poll-status')
+def poll_status():
+    """Polling endpoint as fallback for environments where SSE doesn't work well"""
+    session_id = request.args.get('session_id')
     
-    return Response(generate(), mimetype='text/event-stream')
+    app.logger.info(f"Polling for status of session: {session_id}")
+    
+    if session_id not in active_uploads:
+        app.logger.warning(f"Session not found in poll-status: {session_id}")
+        return jsonify({'type': 'error', 'message': 'Session not found'})
+    
+    upload_data = active_uploads[session_id]
+    
+    # Check if upload is complete
+    if upload_data.get('completed', False):
+        return jsonify({
+            'type': 'complete',
+            'total': upload_data['total'],
+            'uploaded': upload_data['uploaded'],
+            'percent': 100
+        })
+    
+    # Check for cancellation
+    if upload_data.get('cancelled', False):
+        return jsonify({
+            'type': 'error',
+            'message': 'Upload cancelled',
+            'total': upload_data['total'],
+            'uploaded': upload_data['uploaded'],
+            'percent': int((upload_data['uploaded'] / upload_data['total']) * 100) if upload_data['total'] > 0 else 0
+        })
+    
+    # Return current progress
+    return jsonify({
+        'type': 'progress',
+        'total': upload_data['total'],
+        'uploaded': upload_data['uploaded'],
+        'percent': int((upload_data['uploaded'] / upload_data['total']) * 100) if upload_data['total'] > 0 else 0
+    })
 
 @app.route('/upload', methods=['POST'])
 def upload():
@@ -385,4 +434,6 @@ def check_status():
     })
 
 if __name__ == '__main__':
-    app.run(debug=os.environ.get('DEBUG', False), port=5001)
+    port = int(os.environ.get('PORT', 5001))
+    debug = os.environ.get('DEBUG', 'False').lower() == 'true'
+    app.run(host='0.0.0.0', port=port, debug=debug)

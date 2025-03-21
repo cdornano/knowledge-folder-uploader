@@ -381,34 +381,140 @@
             // Create unique session ID
             sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
             
+            // Set up SSE for progress updates with reconnection capability
+            setupSSEConnection(sessionId);
+            
             // Create form data
             const formData = new FormData();
             formData.append('session_id', sessionId);
             formData.append('api_key', apiKey);
             formData.append('folder_id', folderId);
             
-            // Add files and paths
             for (let i = 0; i < files.length; i++) {
                 formData.append('files[]', files[i]);
                 formData.append('paths[]', paths[i]);
             }
             
-            // Start progress monitoring
-            startProgressMonitoring();
-            
             // Make upload request
             fetch('/upload', {
                 method: 'POST',
                 body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                console.log('Upload initiated:', data);
-            })
-            .catch(error => {
-                console.error('Error starting upload:', error);
-                showUploadError('Failed to start upload: ' + error.message);
+            }).then(response => {
+                return response.json();
+            }).then(data => {
+                console.log('Upload started:', data);
+            }).catch(error => {
+                console.error('Upload error:', error);
+                showUploadError('Failed to start upload process');
             });
+        }
+        
+        // Set up SSE connection with reconnection logic
+        function setupSSEConnection(sessionId) {
+            let retryCount = 0;
+            const maxRetries = 3;
+            let eventSource;
+            
+            function connectSSE() {
+                // Close any existing connection
+                if (eventSource) {
+                    eventSource.close();
+                }
+                
+                // Create new connection
+                eventSource = new EventSource(`/progress?session_id=${sessionId}`);
+                
+                // Connection opened
+                eventSource.onopen = function() {
+                    console.log('SSE connection established');
+                    retryCount = 0; // Reset retry count on successful connection
+                };
+                
+                // Handle messages
+                eventSource.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    
+                    // Handle different message types
+                    switch(data.type) {
+                        case 'connected':
+                            console.log('SSE connection confirmed by server');
+                            break;
+                            
+                        case 'progress':
+                            updateProgressUI(data);
+                            break;
+                            
+                        case 'complete':
+                            fetchFinalResults();
+                            eventSource.close();
+                            break;
+                            
+                        case 'error':
+                            showUploadError(data.message);
+                            eventSource.close();
+                            break;
+                            
+                        case 'keep-alive':
+                            // Just a ping to keep connection alive
+                            console.log('Keep-alive received');
+                            break;
+                    }
+                };
+                
+                // Error handling
+                eventSource.onerror = function(error) {
+                    console.error('SSE connection error:', error);
+                    
+                    if (retryCount < maxRetries) {
+                        retryCount++;
+                        console.log(`Retrying SSE connection (${retryCount}/${maxRetries})...`);
+                        
+                        // Close current connection
+                        eventSource.close();
+                        
+                        // Try to reconnect after delay
+                        setTimeout(connectSSE, 2000);
+                    } else {
+                        console.error('Max SSE retries reached, switching to polling');
+                        // Fall back to polling for updates
+                        startPollingForUpdates(sessionId);
+                    }
+                };
+            }
+            
+            // Start initial connection
+            connectSSE();
+        }
+        
+        // Fallback polling method if SSE fails
+        function startPollingForUpdates(sessionId) {
+            console.log('Switching to polling for updates');
+            
+            // Show a message to the user that we're switching to compatibility mode
+            const statusEl = document.getElementById('statusMessage');
+            if (statusEl) {
+                statusEl.innerHTML = '<div class="alert alert-warning">Switched to compatibility mode for progress updates</div>';
+            }
+            
+            // Poll every 3 seconds
+            const pollInterval = setInterval(function() {
+                fetch(`/poll-status?session_id=${sessionId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        updateProgressUI(data);
+                        
+                        if (data.type === 'complete') {
+                            clearInterval(pollInterval);
+                            fetchFinalResults();
+                        } else if (data.type === 'error') {
+                            clearInterval(pollInterval);
+                            showUploadError(data.message);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Polling error:', error);
+                    });
+            }, 3000);
         }
         
         // Start monitoring upload progress
